@@ -107,16 +107,19 @@ def ingest_documents():
             })
         total_chunks += len(chunks)
         print(f"  {doc['source']}: {len(chunks)} chunks")
+    print(f'Pre-processed {len(documents)} files into {total_chunks} chunks')
 
-    # Add all at once (ChromaDB handles batching internally)
-    if all_texts:
+    # Add in batches to stay under ChromaDB's max batch size
+    batch_size = 5000
+    for start in range(0, len(all_texts), batch_size):
+        end = start + batch_size
         collection.add(
-            documents=all_texts,
-            ids=all_ids,
-            metadatas=all_metadatas,
+            documents=all_texts[start:end],
+            ids=all_ids[start:end],
+            metadatas=all_metadatas[start:end],
         )
 
-    print(f"\nIngested {len(documents)} files -> {total_chunks} chunks")
+    print(f"\nIngested documents into ChromaDB collection.")
 
 
 if __name__ == "__main__":
