@@ -1,0 +1,20 @@
+# Vector database
+chroma_db/
+
+# Downloaded data
+data/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Environment
+.env
+*.env
+
+# Claude
+.claude/
