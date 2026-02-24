@@ -5,7 +5,9 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # Paths
 DATA_DIR = _PROJECT_ROOT / "data"
+METADATA_DIR = DATA_DIR / "metadata"
 CHROMA_DIR = _PROJECT_ROOT / "chroma_db"
+EVAL_DIR = _PROJECT_ROOT / "eval"
 
 # ChromaDB
 COLLECTION_NAME = "documents"
@@ -20,3 +22,44 @@ LLM_MODEL = "llama3.2"
 
 # Retrieval
 TOP_K = 5
+
+# ---------------------------------------------------------------------------
+# Feature Flags (all default to False for backward compatibility)
+# ---------------------------------------------------------------------------
+
+# Ingestion & Retrieval
+ENABLE_CONTEXT_AWARE_CHUNKING = True
+ENABLE_SEMANTIC_CHUNKING = True
+ENABLE_CONTEXTUAL_RETRIEVAL = True
+ENABLE_METADATA_ENRICHMENT = True
+ENABLE_HYBRID_SEARCH = True
+ENABLE_RERANKING = True
+
+# Query & Generation
+ENABLE_QUERY_REFORMULATION = True
+ENABLE_ENHANCED_PROMPT = True
+ENABLE_CONTEXT_PRESENTATION = True
+
+# Advanced Generation
+ENABLE_PROMPT_CHAINING = True
+
+# Evaluation
+ENABLE_EVALUATION = True
+
+# ---------------------------------------------------------------------------
+# Feature-specific settings
+# ---------------------------------------------------------------------------
+
+# Context-aware chunking strategy: "sentence" | "paragraph" | "section"
+CHUNKING_STRATEGY = "paragraph"
+
+# Semantic chunking: similarity threshold (lower = fewer splits / bigger chunks)
+SEMANTIC_SIMILARITY_THRESHOLD = 0.5
+
+# Hybrid search: BM25 weight in RRF fusion
+BM25_WEIGHT = 1.0
+RRF_K = 60
+
+# Reranking: fetch more candidates, then rerank down to TOP_K
+RERANK_INITIAL_K = 20
+CROSS_ENCODER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"

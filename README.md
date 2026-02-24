@@ -1,8 +1,8 @@
-# Vanilla RAG System
+# RAG System
 
 A fully local Retrieval-Augmented Generation system. No external APIs, no costs, fully private.
 
-Ingests text and markdown documents, stores embeddings in ChromaDB, and answers questions using a local Ollama LLM.
+Ingests text and markdown documents, stores embeddings in ChromaDB, and answers questions using a local Ollama LLM. Every enhancement is controlled by a feature flag in `rag/config.py` — with all flags off the system behaves as a vanilla RAG pipeline.
 
 ## Requirements
 
@@ -40,6 +40,9 @@ python main.py query "What happened on the first day of creation?"
 
 # 5. Or start an interactive chat
 python main.py chat
+
+# 6. Run retrieval evaluation
+python main.py eval
 ```
 
 ## CLI Commands
@@ -52,6 +55,53 @@ python main.py chat
 | `python main.py ingest` | Ingest all documents from `data/` into ChromaDB |
 | `python main.py query "question"` | Ask a one-shot question |
 | `python main.py chat` | Interactive chat mode (type `quit` to exit) |
+| `python main.py eval` | Run retrieval evaluation against the test set |
+
+## Feature Flags
+
+All flags live in `rag/config.py` and default to `False`. Enable them individually to layer improvements on top of the vanilla pipeline. Ingestion-time flags (`CONTEXT_AWARE_CHUNKING`, `SEMANTIC_CHUNKING`, `CONTEXTUAL_RETRIEVAL`, `METADATA_ENRICHMENT`) require re-running `python main.py ingest` after toggling.
+
+### Ingestion & Retrieval
+
+| Flag | Description |
+|------|-------------|
+| `ENABLE_CONTEXT_AWARE_CHUNKING` | Paragraph-aware or section-aware chunking (set `CHUNKING_STRATEGY` to `"paragraph"` or `"section"`) |
+| `ENABLE_SEMANTIC_CHUNKING` | Embedding-based chunking that splits on topic shifts (takes precedence over context-aware chunking) |
+| `ENABLE_CONTEXTUAL_RETRIEVAL` | LLM generates a contextual prefix per chunk during ingestion |
+| `ENABLE_METADATA_ENRICHMENT` | Attaches volume, book, chapter, summaries, and structural metadata to each chunk |
+| `ENABLE_HYBRID_SEARCH` | Combines dense vector search with BM25 keyword search via Reciprocal Rank Fusion |
+| `ENABLE_RERANKING` | Cross-encoder reranking of candidates (fetches `RERANK_INITIAL_K` then reranks to `TOP_K`) |
+
+### Query & Generation
+
+| Flag | Description |
+|------|-------------|
+| `ENABLE_QUERY_REFORMULATION` | LLM rewrites the user query into an optimized search query before retrieval |
+| `ENABLE_ENHANCED_PROMPT` | Richer system prompt with step-by-step reasoning, cross-document synthesis, and confidence signals |
+| `ENABLE_CONTEXT_PRESENTATION` | Deduplicates near-identical chunks and reorders by best available score |
+
+### Advanced Generation
+
+| Flag | Description |
+|------|-------------|
+| `ENABLE_PROMPT_CHAINING` | Multi-step pipeline: extract key facts from chunks, then generate a final answer from those facts |
+
+### Evaluation
+
+| Flag | Description |
+|------|-------------|
+| `ENABLE_EVALUATION` | Enables the evaluation subsystem (`eval/test_set.json`) |
+
+### Feature-Specific Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `CHUNKING_STRATEGY` | `"paragraph"` | `"sentence"`, `"paragraph"`, or `"section"` (requires `ENABLE_CONTEXT_AWARE_CHUNKING`) |
+| `SEMANTIC_SIMILARITY_THRESHOLD` | `0.5` | Cosine similarity threshold for semantic chunk splits (lower = bigger chunks) |
+| `BM25_WEIGHT` | `1.0` | BM25 weight in RRF fusion |
+| `RRF_K` | `60` | RRF smoothing constant |
+| `RERANK_INITIAL_K` | `20` | Number of candidates to fetch before cross-encoder reranking |
+| `CROSS_ENCODER_MODEL` | `"cross-encoder/ms-marco-MiniLM-L-6-v2"` | Cross-encoder model for reranking |
 
 ## Using Your Own Documents
 
@@ -72,19 +122,27 @@ project/
 │   ├── download_scriptures.py
 │   └── generate_metadata.py  # Two-pass LLM summarization
 ├── rag/
-│   ├── config.py        # Configuration
-│   ├── ingest.py        # Document chunking + embedding
-│   ├── retriever.py     # Semantic search
-│   └── generator.py     # Prompt construction + LLM
+│   ├── config.py        # Configuration + feature flags
+│   ├── chunking.py      # Chunking strategies (sentence, paragraph, section, semantic)
+│   ├── ingest.py        # Document loading, chunking, enrichment, embedding
+│   ├── retriever.py     # Vector search, BM25, hybrid search
+│   ├── reranker.py      # RRF fusion + cross-encoder reranking
+│   ├── query.py         # Query reformulation
+│   ├── generator.py     # Prompt construction, enhanced prompts, prompt chaining
+│   └── evaluation.py    # Retrieval metrics (Recall@k, Precision@k, MRR)
 ├── data/                # Your documents go here
 │   └── metadata/        # Generated metadata (volume, book, chapter summaries)
+├── eval/
+│   └── test_set.json    # Q&A test pairs for evaluation
 ├── docs/
-│   ├── plan.md          # Architecture overview
-│   └── RAG.md           # RAG improvement techniques
+│   ├── plan_v2.md       # Feature flag implementation plan
+│   ├── improvements.md  # RAG improvement techniques reference
+│   └── RAG.md           # RAG techniques deep-dive
 └── requirements.txt
 ```
 
 ## Documentation
 
-- [plan.md](docs/plan.md) — Architecture, configuration, and improvement suggestions
+- [plan_v2.md](docs/plan_v2.md) — Feature flags and phased improvement plan
+- [improvements.md](docs/improvements.md) — Implementation guide for RAG techniques
 - [RAG.md](docs/RAG.md) — Detailed reference on RAG improvement techniques

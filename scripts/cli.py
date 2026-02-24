@@ -7,7 +7,7 @@ from rich.panel import Panel
 
 from rag.ingest import ingest_documents
 from rag.retriever import retrieve
-from rag.generator import generate
+from rag.generator import generate, analyze_and_extract, generate_from_facts
 from rag import config
 
 console = Console()
@@ -34,17 +34,45 @@ def display_sources(contexts: list[dict]):
     console.print()
 
 
-def cmd_query(question: str):
-    """Answer a single question."""
-    contexts = retrieve(question)
+def _maybe_reformulate(question: str) -> tuple[str, str]:
+    """Optionally reformulate the query for better retrieval.
+
+    Returns ``(search_query, original_query)``.  When reformulation is
+    disabled, both values are the original question.
+    """
+    if config.ENABLE_QUERY_REFORMULATION:
+        from rag.query import reformulate_query
+        search_query = reformulate_query(question)
+        if search_query != question:
+            console.print(f"[dim]Reformulated query: {search_query}[/dim]")
+        return search_query, question
+    return question, question
+
+
+def _run_pipeline(question: str):
+    """Shared query pipeline used by both ``cmd_query`` and ``cmd_chat``."""
+    search_query, original_query = _maybe_reformulate(question)
+
+    contexts = retrieve(search_query)
     display_sources(contexts)
 
     if not contexts:
         console.print("[yellow]No documents ingested. Run 'python main.py ingest' first.[/yellow]")
         return
 
-    console.print("[bold]Answer:[/bold]")
-    generate(question, contexts)
+    if config.ENABLE_PROMPT_CHAINING:
+        console.print("[dim]Extracting key facts...[/dim]")
+        facts = analyze_and_extract(original_query, contexts)
+        console.print("[bold]Answer:[/bold]")
+        generate_from_facts(original_query, facts)
+    else:
+        console.print("[bold]Answer:[/bold]")
+        generate(original_query, contexts)
+
+
+def cmd_query(question: str):
+    """Answer a single question."""
+    _run_pipeline(question)
 
 
 def cmd_chat():
@@ -62,15 +90,8 @@ def cmd_chat():
         if question.lower() in ("quit", "exit"):
             break
 
-        contexts = retrieve(question)
-        display_sources(contexts)
-
-        if not contexts:
-            console.print("[yellow]No documents ingested. Run 'python main.py ingest' first.[/yellow]")
-            continue
-
         console.print("[bold green]Assistant:[/bold green]")
-        generate(question, contexts)
+        _run_pipeline(question)
 
     console.print("\n[dim]Goodbye.[/dim]")
 
@@ -91,6 +112,14 @@ def cmd_generate_metadata(force: bool = False):
     console.print("[green]Done.[/green]")
 
 
+def cmd_eval():
+    """Run retrieval evaluation against the test set."""
+    from rag.evaluation import run_retrieval_eval
+    console.print(Panel("Running retrieval evaluation"))
+    run_retrieval_eval()
+    console.print("[green]Done.[/green]")
+
+
 def run_cli():
     if len(sys.argv) < 2:
         console.print("Usage:")
@@ -99,6 +128,7 @@ def run_cli():
         console.print("  python main.py [bold]ingest[/bold]                      Ingest documents from data/")
         console.print('  python main.py [bold]query[/bold] "question"            Ask a one-shot question')
         console.print("  python main.py [bold]chat[/bold]                        Interactive chat mode")
+        console.print("  python main.py [bold]eval[/bold]                        Run retrieval evaluation")
         sys.exit(1)
 
     command = sys.argv[1].lower()
@@ -117,6 +147,8 @@ def run_cli():
         cmd_query(" ".join(sys.argv[2:]))
     elif command == "chat":
         cmd_chat()
+    elif command == "eval":
+        cmd_eval()
     else:
         console.print(f"[red]Unknown command: {command}[/red]")
         sys.exit(1)

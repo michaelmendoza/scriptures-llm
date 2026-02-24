@@ -4,6 +4,9 @@ chroma_db/
 # Downloaded data
 data/
 
+# Generated files
+eval/
+
 # Python
 __pycache__/
 *.pyc
