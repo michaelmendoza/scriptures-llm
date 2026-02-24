@@ -83,19 +83,31 @@ def cmd_download():
     console.print("[green]Done.[/green]")
 
 
+def cmd_generate_metadata(force: bool = False):
+    """Generate LLM-powered chapter and book summaries."""
+    from scripts.generate_metadata import main as gen_meta_main
+    console.print(Panel("Generating metadata with LLM summaries (two-pass)"))
+    gen_meta_main(force=force)
+    console.print("[green]Done.[/green]")
+
+
 def run_cli():
     if len(sys.argv) < 2:
         console.print("Usage:")
-        console.print("  python main.py [bold]download[/bold]           Download KJV Bible test data")
-        console.print("  python main.py [bold]ingest[/bold]             Ingest documents from data/")
-        console.print('  python main.py [bold]query[/bold] "question"   Ask a one-shot question')
-        console.print("  python main.py [bold]chat[/bold]               Interactive chat mode")
+        console.print("  python main.py [bold]download[/bold]                    Download KJV Bible test data")
+        console.print("  python main.py [bold]generate-metadata[/bold] [--force]  Generate chapter & book summaries via LLM")
+        console.print("  python main.py [bold]ingest[/bold]                      Ingest documents from data/")
+        console.print('  python main.py [bold]query[/bold] "question"            Ask a one-shot question')
+        console.print("  python main.py [bold]chat[/bold]                        Interactive chat mode")
         sys.exit(1)
 
     command = sys.argv[1].lower()
 
     if command == "download":
         cmd_download()
+    elif command == "generate-metadata":
+        force = "--force" in sys.argv[2:]
+        cmd_generate_metadata(force=force)
     elif command == "ingest":
         cmd_ingest()
     elif command == "query":
