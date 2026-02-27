@@ -9,7 +9,6 @@ import re
 import numpy as np
 import ollama
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn
 
 from rag import config
 
@@ -158,11 +157,8 @@ def chunk_sections(
 
 def _embed_texts(texts: list[str]) -> list[list[float]]:
     """Embed a list of texts using the configured Ollama embedding model."""
-    embeddings = []
-    for t in texts:
-        resp = ollama.embed(model=config.EMBEDDING_MODEL, input=t)
-        embeddings.append(resp["embeddings"][0])
-    return embeddings
+    resp = ollama.embed(model=config.EMBEDDING_MODEL, input=texts)
+    return resp["embeddings"]
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
@@ -194,26 +190,17 @@ def chunk_semantic(
         return [text.strip()] if text.strip() else []
 
     console.print("[dim]  Embedding sentences for semantic chunking...[/dim]")
+    resp = ollama.embed(model=config.EMBEDDING_MODEL, input=sentences)
+    raw_embeddings = resp.get("embeddings", [])
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        MofNCompleteColumn(),
-        console=console,
-    ) as progress:
-        task = progress.add_task("Embedding sentences", total=len(sentences))
-        embeddings = []
-        valid_sentences = []
-        for s in sentences:
-            resp = ollama.embed(model=config.EMBEDDING_MODEL, input=s)
-            if not resp.get("embeddings"):
-                progress.advance(task)
-                continue
+    # Filter out any sentences that returned empty embeddings
+    valid_sentences = []
+    embeddings = []
+    for s, emb in zip(sentences, raw_embeddings):
+        if emb:
             valid_sentences.append(s)
-            embeddings.append(resp["embeddings"][0])
-            progress.advance(task)
-        sentences = valid_sentences
+            embeddings.append(emb)
+    sentences = valid_sentences
 
     # Compute consecutive similarities
     similarities = [

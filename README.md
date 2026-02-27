@@ -32,16 +32,19 @@ python main.py download
 # 2. (Optional) Generate chapter & book summaries via LLM
 python main.py generate-metadata
 
-# 3. Ingest documents into vector database
+# 3. Ingest documents into vector database (incremental)
 python main.py ingest
 
-# 4. Ask a question
+# 4. List ingested collections
+python main.py collections
+
+# 5. Ask a question
 python main.py query "What happened on the first day of creation?"
 
-# 5. Or start an interactive chat
+# 6. Or start an interactive chat
 python main.py chat
 
-# 6. Run retrieval evaluation
+# 7. Run retrieval evaluation
 python main.py eval
 ```
 
@@ -52,14 +55,18 @@ python main.py eval
 | `python main.py download` | Download KJV Bible scriptures as test data |
 | `python main.py generate-metadata` | Generate chapter & book summaries via LLM |
 | `python main.py generate-metadata --force` | Regenerate all summaries (ignores cache) |
-| `python main.py ingest` | Ingest all documents from `data/` into ChromaDB |
+| `python main.py ingest` | Ingest documents from `data/` (incremental — skips unchanged files) |
+| `python main.py ingest --fresh` | Wipe collection and re-ingest everything |
+| `python main.py collections` | List all ingested collections and show which is active |
 | `python main.py query "question"` | Ask a one-shot question |
 | `python main.py chat` | Interactive chat mode (type `quit` to exit) |
 | `python main.py eval` | Run retrieval evaluation against the test set |
 
 ## Feature Flags
 
-All flags live in `rag/config.py` and default to `False`. Enable them individually to layer improvements on top of the vanilla pipeline. Ingestion-time flags (`CONTEXT_AWARE_CHUNKING`, `SEMANTIC_CHUNKING`, `CONTEXTUAL_RETRIEVAL`, `METADATA_ENRICHMENT`) require re-running `python main.py ingest` after toggling.
+All flags live in `rag/config.py` and default to `False`. Enable them individually to layer improvements on top of the vanilla pipeline.
+
+Changing any ingestion-time setting automatically creates a **separate collection** (the collection name is derived from a hash of the active settings). This means you can experiment with different configurations without losing previous results — run `python main.py collections` to see all versions side by side.
 
 ### Ingestion & Retrieval
 
@@ -111,6 +118,8 @@ Place `.txt` or `.md` files in the `data/` directory, then run:
 python main.py ingest
 python main.py chat
 ```
+
+Ingestion is incremental by default — only new or modified files are processed. Use `--fresh` to wipe and rebuild from scratch.
 
 ## Project Structure
 

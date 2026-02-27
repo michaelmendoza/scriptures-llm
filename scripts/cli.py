@@ -13,10 +13,14 @@ from rag import config
 console = Console()
 
 
-def cmd_ingest():
+def cmd_ingest(fresh: bool = False):
     """Ingest all documents from the data directory."""
-    console.print(Panel(f"Ingesting documents from [bold]{config.DATA_DIR}/[/bold]"))
-    ingest_documents()
+    mode = "fresh" if fresh else "incremental"
+    console.print(Panel(
+        f"Ingesting documents from [bold]{config.DATA_DIR}/[/bold] ({mode})\n"
+        f"Collection: [cyan]{config.COLLECTION_NAME}[/cyan]"
+    ))
+    ingest_documents(fresh=fresh)
     console.print("[green]Done.[/green]")
 
 
@@ -112,6 +116,36 @@ def cmd_generate_metadata(force: bool = False):
     console.print("[green]Done.[/green]")
 
 
+def cmd_collections():
+    """List all ingested collections and highlight the active one."""
+    import chromadb
+    from rich.table import Table
+
+    client = chromadb.PersistentClient(path=str(config.CHROMA_DIR))
+    collections = client.list_collections()
+
+    if not collections:
+        console.print("[yellow]No collections found. Run 'python main.py ingest' first.[/yellow]")
+        return
+
+    active = config.COLLECTION_NAME
+
+    table = Table(title="Ingested Collections")
+    table.add_column("Collection", style="bold")
+    table.add_column("Chunks", justify="right")
+    table.add_column("Active", justify="center")
+
+    for col in sorted(collections, key=lambda c: c.name):
+        is_active = col.name == active
+        marker = "[green]<--[/green]" if is_active else ""
+        name_style = f"[bold green]{col.name}[/bold green]" if is_active else col.name
+        table.add_row(name_style, str(col.count()), marker)
+
+    console.print(table)
+    console.print(f"\n[dim]Active collection is derived from current config settings.[/dim]")
+    console.print(f"[dim]Change settings in rag/config.py to target a different collection.[/dim]")
+
+
 def cmd_eval():
     """Run retrieval evaluation against the test set."""
     from rag.evaluation import run_retrieval_eval
@@ -125,7 +159,8 @@ def run_cli():
         console.print("Usage:")
         console.print("  python main.py [bold]download[/bold]                    Download KJV Bible test data")
         console.print("  python main.py [bold]generate-metadata[/bold] [--force]  Generate chapter & book summaries via LLM")
-        console.print("  python main.py [bold]ingest[/bold]                      Ingest documents from data/")
+        console.print("  python main.py [bold]ingest[/bold] [--fresh]             Ingest documents from data/ (incremental by default)")
+        console.print("  python main.py [bold]collections[/bold]                 List ingested collections")
         console.print('  python main.py [bold]query[/bold] "question"            Ask a one-shot question')
         console.print("  python main.py [bold]chat[/bold]                        Interactive chat mode")
         console.print("  python main.py [bold]eval[/bold]                        Run retrieval evaluation")
@@ -139,7 +174,10 @@ def run_cli():
         force = "--force" in sys.argv[2:]
         cmd_generate_metadata(force=force)
     elif command == "ingest":
-        cmd_ingest()
+        fresh = "--fresh" in sys.argv[2:]
+        cmd_ingest(fresh=fresh)
+    elif command == "collections":
+        cmd_collections()
     elif command == "query":
         if len(sys.argv) < 3:
             console.print("[red]Please provide a question: python main.py query \"your question\"[/red]")

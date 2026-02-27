@@ -1,5 +1,6 @@
 """Document ingestion pipeline: load, chunk, enrich, embed, and store."""
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -8,6 +9,7 @@ import chromadb
 import ollama
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn
+from rich.table import Table
 
 from rag import config
 from rag.chunking import chunk_text as _chunk_text_dispatch, chunk_sentences
@@ -22,11 +24,8 @@ class OllamaEmbeddingFunction(chromadb.EmbeddingFunction):
         self.model = model
 
     def __call__(self, input: list[str]) -> list[list[float]]:
-        embeddings = []
-        for text in input:
-            response = ollama.embed(model=self.model, input=text)
-            embeddings.append(response["embeddings"][0])
-        return embeddings
+        response = ollama.embed(model=self.model, input=input)
+        return response["embeddings"]
 
 
 def get_collection():
@@ -250,21 +249,75 @@ def generate_chunk_context(chunk_text_str: str, full_text: str) -> str:
 # Main ingestion pipeline
 # ---------------------------------------------------------------------------
 
-def ingest_documents():
-    """Full ingestion pipeline: load, chunk, embed, and store documents."""
+def _content_hash(text: str) -> str:
+    """Return a short SHA-256 hex digest for *text*."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def _existing_source_hashes(collection) -> dict[str, str]:
+    """Return ``{source: content_hash}`` for documents already in the collection."""
+    count = collection.count()
+    if count == 0:
+        return {}
+    data = collection.get(include=["metadatas"])
+    hashes: dict[str, str] = {}
+    for meta in data["metadatas"]:
+        src = meta.get("source", "")
+        h = meta.get("content_hash", "")
+        if src and h:
+            hashes[src] = h
+    return hashes
+
+
+def ingest_documents(fresh: bool = False):
+    """Full ingestion pipeline: load, chunk, embed, and store documents.
+
+    When *fresh* is ``True`` the collection is wiped first.  Otherwise only
+    new or modified documents are ingested (incremental mode).
+    """
     documents = load_documents()
     if not documents:
-        print(f"No .txt or .md files found in {config.DATA_DIR}/")
+        console.print(f"[yellow]No .txt or .md files found in {config.DATA_DIR}/[/yellow]")
         return
 
     collection = get_collection()
 
-    # Clear existing data for a fresh ingest
-    existing = collection.count()
-    if existing > 0:
-        all_ids = collection.get()["ids"]
-        collection.delete(ids=all_ids)
-        print(f"Cleared {existing} existing chunks.")
+    # Fresh mode: wipe collection
+    if fresh:
+        existing = collection.count()
+        if existing > 0:
+            all_ids = collection.get()["ids"]
+            collection.delete(ids=all_ids)
+            console.print(f"[dim]Cleared {existing} existing chunks (fresh ingest).[/dim]")
+        existing_hashes: dict[str, str] = {}
+    else:
+        existing_hashes = _existing_source_hashes(collection)
+
+    # Filter to new / modified documents
+    docs_to_ingest: list[dict] = []
+    skipped = 0
+    for doc in documents:
+        doc["content_hash"] = _content_hash(doc["text"])
+        prev_hash = existing_hashes.get(doc["source"])
+        if prev_hash and prev_hash == doc["content_hash"]:
+            skipped += 1
+            continue
+        # If the source exists but content changed, delete old chunks first
+        if prev_hash:
+            old_ids = [
+                cid for cid in collection.get()["ids"]
+                if cid.startswith(f"{doc['source']}::")
+            ]
+            if old_ids:
+                collection.delete(ids=old_ids)
+        docs_to_ingest.append(doc)
+
+    if skipped:
+        console.print(f"[dim]Skipped {skipped} unchanged document(s).[/dim]")
+
+    if not docs_to_ingest:
+        console.print("[green]All documents already ingested. Nothing to do.[/green]")
+        return
 
     # Load metadata if enrichment is enabled
     metadata_lookup: dict = {}
@@ -279,50 +332,81 @@ def ingest_documents():
     )
     chunk_fn = _chunk_text_dispatch if use_advanced_chunking else chunk_text
 
-    total_chunks = 0
     all_texts: list[str] = []
     all_ids: list[str] = []
     all_metadatas: list[dict] = []
 
-    for doc in documents:
-        chunks = chunk_fn(doc["text"])
-        num_chunks = len(chunks)
+    # --- Phase 1: Chunking documents ---
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Chunking documents", total=len(docs_to_ingest))
+        for doc in docs_to_ingest:
+            chunks = chunk_fn(doc["text"])
+            num_chunks = len(chunks)
 
-        for i, chunk in enumerate(chunks):
-            chunk_id = f"{doc['source']}::chunk_{i}"
+            for i, chunk in enumerate(chunks):
+                chunk_id = f"{doc['source']}::chunk_{i}"
 
-            # Optionally generate contextual prefix
-            if config.ENABLE_CONTEXTUAL_RETRIEVAL:
-                prefix = generate_chunk_context(chunk, doc["text"])
-                chunk = f"{prefix}\n\n{chunk}"
+                all_texts.append(chunk)
+                all_ids.append(chunk_id)
+                all_metadatas.append({
+                    "_doc_source": doc["source"],
+                    "_doc_text": doc["text"],
+                    "_chunk_index": i,
+                    "_total_chunks": num_chunks,
+                    "_content_hash": doc["content_hash"],
+                })
 
-            all_texts.append(chunk)
-            all_ids.append(chunk_id)
+            progress.advance(task)
 
-            # Build metadata
-            if config.ENABLE_METADATA_ENRICHMENT and metadata_lookup:
-                meta = extract_metadata(
-                    source=doc["source"],
-                    chunk_index=i,
-                    total_chunks=num_chunks,
-                    text=chunk,
-                    full_text=doc["text"],
-                    metadata_lookup=metadata_lookup,
+    console.print(
+        f"[dim]Chunked {len(docs_to_ingest)} document(s) into "
+        f"{len(all_texts)} chunk(s).[/dim]"
+    )
+
+    # --- Phase 2: Contextual retrieval (LLM prefixes) ---
+    if config.ENABLE_CONTEXTUAL_RETRIEVAL:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Generating context prefixes", total=len(all_texts))
+            for idx in range(len(all_texts)):
+                prefix = generate_chunk_context(
+                    all_texts[idx], all_metadatas[idx]["_doc_text"]
                 )
-            else:
-                meta = {
-                    "source": doc["source"],
-                    "chunk_index": i,
-                }
+                all_texts[idx] = f"{prefix}\n\n{all_texts[idx]}"
+                progress.advance(task)
 
-            all_metadatas.append(meta)
+    # --- Phase 3: Build final metadata ---
+    final_metadatas: list[dict] = []
+    for idx, raw in enumerate(all_metadatas):
+        if config.ENABLE_METADATA_ENRICHMENT and metadata_lookup:
+            meta = extract_metadata(
+                source=raw["_doc_source"],
+                chunk_index=raw["_chunk_index"],
+                total_chunks=raw["_total_chunks"],
+                text=all_texts[idx],
+                full_text=raw["_doc_text"],
+                metadata_lookup=metadata_lookup,
+            )
+        else:
+            meta = {
+                "source": raw["_doc_source"],
+                "chunk_index": raw["_chunk_index"],
+            }
+        meta["content_hash"] = raw["_content_hash"]
+        final_metadatas.append(meta)
 
-        total_chunks += num_chunks
-        print(f"  {doc['source']}: {num_chunks} chunks")
-
-    print(f'Pre-processed {len(documents)} files into {total_chunks} chunks')
-
-    # Add in batches to stay under ChromaDB's max batch size
+    # --- Phase 4: Embed & store ---
     batch_size = 5000
     with Progress(
         SpinnerColumn(),
@@ -337,11 +421,19 @@ def ingest_documents():
             collection.add(
                 documents=all_texts[start:end],
                 ids=all_ids[start:end],
-                metadatas=all_metadatas[start:end],
+                metadatas=final_metadatas[start:end],
             )
             progress.advance(task, advance=min(batch_size, len(all_texts) - start))
 
-    print(f"\nIngested documents into ChromaDB collection.")
+    # Summary
+    table = Table(title="Ingestion Summary", show_lines=False)
+    table.add_column("Metric", style="bold")
+    table.add_column("Value", justify="right")
+    table.add_row("Documents processed", str(len(docs_to_ingest)))
+    table.add_row("Documents skipped (unchanged)", str(skipped))
+    table.add_row("Chunks created", str(len(all_texts)))
+    table.add_row("Total in collection", str(collection.count()))
+    console.print(table)
 
 
 if __name__ == "__main__":
