@@ -116,12 +116,25 @@ def cmd_generate_metadata(force: bool = False):
     console.print("[green]Done.[/green]")
 
 
-def cmd_collections():
-    """List all ingested collections and highlight the active one."""
+def cmd_collections(delete: str | None = None):
+    """List all ingested collections, or delete one by name."""
     import chromadb
     from rich.table import Table
 
     client = chromadb.PersistentClient(path=str(config.CHROMA_DIR))
+
+    # Handle deletion
+    if delete:
+        names = [c.name for c in client.list_collections()]
+        if delete not in names:
+            console.print(f"[red]Collection '{delete}' not found.[/red]")
+            console.print(f"[dim]Available: {', '.join(names) or '(none)'}[/dim]")
+            return
+        count = client.get_collection(delete).count()
+        client.delete_collection(delete)
+        console.print(f"[green]Deleted collection '{delete}' ({count} chunks).[/green]")
+        return
+
     collections = client.list_collections()
 
     if not collections:
@@ -142,6 +155,22 @@ def cmd_collections():
         table.add_row(name_style, str(col.count()), marker)
 
     console.print(table)
+
+    # Show settings for each collection
+    for col in sorted(collections, key=lambda c: c.name):
+        meta = col.metadata or {}
+        if not meta:
+            continue
+        is_active = col.name == active
+        style = "bold green" if is_active else "dim"
+        console.print(f"\n[{style}]{col.name}[/{style}]")
+        for key, value in sorted(meta.items()):
+            if isinstance(value, bool):
+                val_str = f"[green]on[/green]" if value else f"[red]off[/red]"
+            else:
+                val_str = str(value)
+            console.print(f"  {key}: {val_str}")
+
     console.print(f"\n[dim]Active collection is derived from current config settings.[/dim]")
     console.print(f"[dim]Change settings in rag/config.py to target a different collection.[/dim]")
 
@@ -161,6 +190,7 @@ def run_cli():
         console.print("  python main.py [bold]generate-metadata[/bold] [--force]  Generate chapter & book summaries via LLM")
         console.print("  python main.py [bold]ingest[/bold] [--fresh]             Ingest documents from data/ (incremental by default)")
         console.print("  python main.py [bold]collections[/bold]                 List ingested collections")
+        console.print("  python main.py [bold]collections --delete[/bold] <name>  Delete a collection")
         console.print('  python main.py [bold]query[/bold] "question"            Ask a one-shot question')
         console.print("  python main.py [bold]chat[/bold]                        Interactive chat mode")
         console.print("  python main.py [bold]eval[/bold]                        Run retrieval evaluation")
@@ -177,7 +207,15 @@ def run_cli():
         fresh = "--fresh" in sys.argv[2:]
         cmd_ingest(fresh=fresh)
     elif command == "collections":
-        cmd_collections()
+        delete_idx = None
+        for i, arg in enumerate(sys.argv[2:], start=2):
+            if arg == "--delete" and i + 1 < len(sys.argv):
+                delete_idx = i
+                break
+        if delete_idx is not None:
+            cmd_collections(delete=sys.argv[delete_idx + 1])
+        else:
+            cmd_collections()
     elif command == "query":
         if len(sys.argv) < 3:
             console.print("[red]Please provide a question: python main.py query \"your question\"[/red]")

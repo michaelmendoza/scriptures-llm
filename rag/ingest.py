@@ -3,6 +3,7 @@
 import hashlib
 import json
 import re
+import time
 from pathlib import Path
 
 import chromadb
@@ -34,6 +35,7 @@ def get_collection():
     return client.get_or_create_collection(
         name=config.COLLECTION_NAME,
         embedding_function=OllamaEmbeddingFunction(),
+        metadata=config.get_ingestion_settings(),
     )
 
 
@@ -335,8 +337,11 @@ def ingest_documents(fresh: bool = False):
     all_texts: list[str] = []
     all_ids: list[str] = []
     all_metadatas: list[dict] = []
+    timings: list[tuple[str, float]] = []
+    t_total_start = time.perf_counter()
 
     # --- Phase 1: Chunking documents ---
+    t0 = time.perf_counter()
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -363,6 +368,7 @@ def ingest_documents(fresh: bool = False):
                 })
 
             progress.advance(task)
+    timings.append(("Chunking", time.perf_counter() - t0))
 
     console.print(
         f"[dim]Chunked {len(docs_to_ingest)} document(s) into "
@@ -371,6 +377,7 @@ def ingest_documents(fresh: bool = False):
 
     # --- Phase 2: Contextual retrieval (LLM prefixes) ---
     if config.ENABLE_CONTEXTUAL_RETRIEVAL:
+        t0 = time.perf_counter()
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -385,8 +392,10 @@ def ingest_documents(fresh: bool = False):
                 )
                 all_texts[idx] = f"{prefix}\n\n{all_texts[idx]}"
                 progress.advance(task)
+        timings.append(("Context prefixes", time.perf_counter() - t0))
 
     # --- Phase 3: Build final metadata ---
+    t0 = time.perf_counter()
     final_metadatas: list[dict] = []
     for idx, raw in enumerate(all_metadatas):
         if config.ENABLE_METADATA_ENRICHMENT and metadata_lookup:
@@ -405,8 +414,10 @@ def ingest_documents(fresh: bool = False):
             }
         meta["content_hash"] = raw["_content_hash"]
         final_metadatas.append(meta)
+    timings.append(("Metadata", time.perf_counter() - t0))
 
     # --- Phase 4: Embed & store ---
+    t0 = time.perf_counter()
     batch_size = 5000
     with Progress(
         SpinnerColumn(),
@@ -424,6 +435,9 @@ def ingest_documents(fresh: bool = False):
                 metadatas=final_metadatas[start:end],
             )
             progress.advance(task, advance=min(batch_size, len(all_texts) - start))
+    timings.append(("Embedding & storing", time.perf_counter() - t0))
+
+    total_time = time.perf_counter() - t_total_start
 
     # Summary
     table = Table(title="Ingestion Summary", show_lines=False)
@@ -433,6 +447,11 @@ def ingest_documents(fresh: bool = False):
     table.add_row("Documents skipped (unchanged)", str(skipped))
     table.add_row("Chunks created", str(len(all_texts)))
     table.add_row("Total in collection", str(collection.count()))
+    table.add_section()
+    for phase_name, phase_time in timings:
+        table.add_row(phase_name, f"{phase_time:.1f}s")
+    table.add_section()
+    table.add_row("[bold]Total time[/bold]", f"[bold]{total_time:.1f}s[/bold]")
     console.print(table)
 
 

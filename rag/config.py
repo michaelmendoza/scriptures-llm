@@ -30,8 +30,8 @@ TOP_K = 5
 
 # Ingestion & Retrieval
 ENABLE_CONTEXT_AWARE_CHUNKING = True
-ENABLE_SEMANTIC_CHUNKING = True
-ENABLE_CONTEXTUAL_RETRIEVAL = True
+ENABLE_SEMANTIC_CHUNKING = False
+ENABLE_CONTEXTUAL_RETRIEVAL = False
 ENABLE_METADATA_ENRICHMENT = True
 ENABLE_HYBRID_SEARCH = True
 ENABLE_RERANKING = True
@@ -70,22 +70,31 @@ CROSS_ENCODER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 # Derived collection name
 # ---------------------------------------------------------------------------
 
+def get_ingestion_settings() -> dict:
+    """Return ingestion-relevant settings as a dict.
+
+    Values are strings/ints/floats/bools so they can be stored directly
+    as ChromaDB collection metadata.
+    """
+    return {
+        "embedding_model": EMBEDDING_MODEL,
+        "llm_model": LLM_MODEL,
+        "chunk_size": CHUNK_SIZE,
+        "chunk_overlap": CHUNK_OVERLAP,
+        "semantic_chunking": ENABLE_SEMANTIC_CHUNKING,
+        "context_aware_chunking": ENABLE_CONTEXT_AWARE_CHUNKING,
+        "chunking_strategy": CHUNKING_STRATEGY,
+        "semantic_threshold": SEMANTIC_SIMILARITY_THRESHOLD,
+        "contextual_retrieval": ENABLE_CONTEXTUAL_RETRIEVAL,
+        "metadata_enrichment": ENABLE_METADATA_ENRICHMENT,
+    }
+
+
 def _ingestion_settings_hash() -> str:
     """Short hash of all settings that affect ingested data."""
-    parts = [
-        f"embed={EMBEDDING_MODEL}",
-        f"chunk_size={CHUNK_SIZE}",
-        f"overlap={CHUNK_OVERLAP}",
-        f"semantic={ENABLE_SEMANTIC_CHUNKING}",
-        f"ctx_aware={ENABLE_CONTEXT_AWARE_CHUNKING}",
-        f"strategy={CHUNKING_STRATEGY}",
-        f"sem_thresh={SEMANTIC_SIMILARITY_THRESHOLD}",
-        f"ctx_retr={ENABLE_CONTEXTUAL_RETRIEVAL}",
-        f"llm={LLM_MODEL}",
-        f"meta={ENABLE_METADATA_ENRICHMENT}",
-    ]
-    digest = hashlib.sha256("|".join(parts).encode()).hexdigest()[:8]
-    return digest
+    settings = get_ingestion_settings()
+    key = "|".join(f"{k}={v}" for k, v in sorted(settings.items()))
+    return hashlib.sha256(key.encode()).hexdigest()[:8]
 
 
 def get_collection_name() -> str:

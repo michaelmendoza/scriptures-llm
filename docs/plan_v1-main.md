@@ -1,4 +1,4 @@
-# Vanilla RAG System
+# Vanilla RAG System Plan
 
 ## Overview
 A fully local Retrieval-Augmented Generation system. Ingests text and markdown documents, stores embeddings in ChromaDB, and answers questions using a local Ollama LLM. No external APIs, no costs, fully private.
